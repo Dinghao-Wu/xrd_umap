@@ -1,0 +1,2 @@
+[console_scripts]
+xrd-umap = xrd_umap.cli:main

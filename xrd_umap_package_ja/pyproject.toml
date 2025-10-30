@@ -1,0 +1,26 @@
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "xrd-umap"
+version = "0.3.0"
+description = "XRD dataset builder (minimal-change) + optional zero-shift; JA docs"
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [{name = "Your Team"}]
+dependencies = [
+  "numpy>=1.23",
+  "pandas>=1.5"
+]
+
+[project.optional-dependencies]
+vendor = ["xylib-py>=1.6"]
+
+[project.scripts]
+xrd-umap = "xrd_umap.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["xrd_umap*"]

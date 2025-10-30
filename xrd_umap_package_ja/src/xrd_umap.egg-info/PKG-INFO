@@ -1,0 +1,122 @@
+Metadata-Version: 2.4
+Name: xrd-umap
+Version: 0.3.0
+Summary: XRD dataset builder (minimal-change) + optional zero-shift; JA docs
+Author: Your Team
+Requires-Python: >=3.9
+Description-Content-Type: text/markdown
+Requires-Dist: numpy>=1.23
+Requires-Dist: pandas>=1.5
+Provides-Extra: vendor
+Requires-Dist: xylib-py>=1.6; extra == "vendor"
+
+
+# xrd-umap（最小変更・モジュール分割 + 任意のゼロ点補正）
+
+**目的**：既存のデータセット生成スクリプトの**振る舞いを一切変えず**に、コードを**モジュール化**し、Readerプラグイン方式と**ゼロ点補正（任意）**モジュールを追加しました。
+
+- データセット生成の仕様（`calcd_patterns.csv` は**数値のみ**の行列、`targets.csv` は **file→行番号** の対応）は元の `xrd_to_dataset.py` と同一です。fileciteturn0file1
+- ゼロ点補正の計算ロジック／入出力フォーマットは元の `urlap_report_v3.py` を**そのまま**使っています。fileciteturn0file0
+
+---
+
+## インストール
+```bash
+pip install -e .
+# ベンダー形式を読みたい場合:
+pip install '.[vendor]'   # xylib-py を追加インストール
+```
+
+## 1) データセット生成（既存と等価）
+```bash
+xrd-umap dataset ./mydata --xmin 10 --xmax 80 --step 0.02
+```
+出力:
+- **calcd_patterns.csv**：数値のみの行列（ヘッダなし・インデックスなし・ファイル名列なし）  
+- **targets.csv**：`file,label`（`label` は行番号）
+
+> `xylib-py` が未導入の場合は、ベンダー形式（.ras/.raw/...）はスキップされます。ASCII 2列と XRDML はそのまま読み込めます。
+
+### データフロー（データセット）
+```mermaid
+flowchart TD
+  A[入力ディレクトリ] --> B{Readerで読み込み}
+  B -->|ASCII 2列| C[2θ, 強度]
+  B -->|XRDML| C
+  B -->|xylib ベンダー| C
+  C --> D[共通グリッドを生成 (xmin,xmax,step)]
+  D --> E[線形補間で再サンプリング]
+  E --> F[L2 正規化]
+  F --> G[calcd_patterns.csv (数値のみ)]
+  F --> H[targets.csv (file→label)]
+```
+
+---
+
+## 2) ゼロ点補正（任意・既知 hkl のときのみ使用）
+**peaks.txt** フォーマット（`urlap_report_v3.py` と同一）：fileciteturn0file0
+- 1 行目：タイトル  
+- 2 行目：結晶系コード `1..8`  
+- 3 行目：**波長 [Å]** と **初期 Δ（度）**（任意）  
+- 4 行目以降：`h k l  2theta_obs_raw`（`h>=1000` で終了）
+
+### 固定 Δ
+```bash
+xrd-umap zeroshift fixed -i peaks.txt --wavelength 1.5406 --delta 0.03 --out report.txt
+```
+
+### Δ を走査して最適化（RMS あるいは不確かさ積）
+```bash
+xrd-umap zeroshift scan -i peaks.txt --wavelength 1.5406   --delta-range -0.5 0.5 --step 0.05 --select-by uncprod --out report.txt
+```
+
+### Δ を 2列カーブに適用（任意・便利機能）
+```bash
+# 入出力は 2 列 CSV: 2theta,intensity
+xrd-umap zeroshift apply-curve --in-csv raw.csv --out-csv shifted.csv --delta 0.03
+```
+
+### データフロー（ゼロ点補正）
+```mermaid
+flowchart TD
+  A[peaks.txt (タイトル/系コード/波長/Δ/hkl+2θobs_raw)] --> B{モード}
+  B -->|fixed| C[Δ を指定]
+  B -->|scan| D[Δ∈[min,max] を走査]
+  C --> E[Q 空間での線形回帰 → 格子定数/不確かさ]
+  D --> E
+  E --> F[最適 Δ の決定 & レポート生成]
+  F --> G[report.txt]
+  F --> H[必要なら apply-curve で 2θ を補正]
+```
+
+---
+
+## 対応フォーマット（Reader プラグイン）
+- **ASCII 2 列**：`.txt/.csv/.xy/.xye/.dat`  
+- **PANalytical XRDML**：`.xrdml`  
+- **ベンダー形式（xylib）**：`.ras/.uxd/.raw/.rd/.cpi/.udf/.xdd` など
+
+Reader はプラグインとして登録できます：
+```python
+from xrd_umap.io.readers import Reader, register_reader
+
+def read_myfmt(path: str):
+    # (x: np.ndarray, y: np.ndarray) を返す
+    ...
+
+register_reader(Reader("myfmt", read_myfmt, extensions=(".my",), priority=25))
+```
+
+---
+
+## ディレクトリ構成（抜粋）
+```
+src/xrd_umap/
+  io/readers.py          # Reader レジストリ + ASCII/XRDML/xylib
+  preprocess/resample.py # build_grid / resample_to_grid（既存仕様のまま）
+  preprocess/normalize.py# l2_normalize（既存仕様のまま）
+  calibration/urlap_report_v3.py  # ゼロ点補正ロジック（原文のまま）
+  calibration/zero_shift_cli.py   # CLI 薄いアダプタ
+  pipeline.py             # データセット主処理（仕様は元と同一）
+  cli.py                  # `dataset` / `zeroshift` サブコマンド
+```
